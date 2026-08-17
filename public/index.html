@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChatMe</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; font-family:Arial,Helvetica,sans-serif; }
+html,body { height:100%; }
+body { background:#0d2440; color:#e0f2f1; display:flex; flex-direction:column; }
+header { background:#0a1c33; padding:10px; text-align:center; border-bottom:1px solid #1e3a5f; }
+.logoMini { height:34px; border-radius:8px; vertical-align:middle; }
+#pantalla { display:flex; flex:1; overflow:hidden; }
+#amigos { width:82px; background:#0a1c33; border-right:1px solid #1e3a5f; overflow-y:auto; padding:10px 0; }
+.amigo { text-align:center; margin:14px 0; cursor:pointer; opacity:.7; }
+.amigo.activo { opacity:1; }
+.avatar { width:52px; height:52px; border-radius:50%; background:#123152; border:2px solid #4db6ac; color:#4db6ac; display:flex; align-items:center; justify-content:center; font-size:22px; font-weight:bold; margin:0 auto; position:relative; }
+.punto { width:12px; height:12px; border-radius:50%; background:#78909c; position:absolute; bottom:-1px; right:-1px; border:2px solid #0a1c33; }
+.punto.online { background:#4db6ac; }
+.nombreAmigo { font-size:10px; margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:0 4px; }
+#chat { flex:1; display:flex; flex-direction:column; }
+#tituloChat { padding:10px; text-align:center; font-size:13px; opacity:.7; border-bottom:1px solid #1e3a5f; }
+#mensajes { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:8px; }
+.vacio { margin:auto; opacity:.4; font-size:14px; text-align:center; }
+.burbuja { max-width:75%; padding:10px 14px; border-radius:18px; font-size:15px; word-break:break-word; }
+.mia { align-self:flex-end; background:#4db6ac; color:#06283d; border-bottom-right-radius:4px; }
+.suya { align-self:flex-start; background:#37474f; color:#eceff1; border-bottom-left-radius:4px; }
+.burbuja img { max-width:100%; max-height:240px; border-radius:10px; display:block; }
+.hora { font-size:10px; opacity:.6; margin-top:4px; text-align:right; }
+#barra { display:flex; gap:8px; padding:10px; background:#0a1c33; border-top:1px solid #1e3a5f; align-items:center; }
+#texto { flex:1; background:#123152; border:1px solid #1e3a5f; border-radius:24px; padding:12px 16px; color:#e0f2f1; font-size:15px; outline:none; }
+.boton { width:46px; height:46px; border-radius:50%; border:none; background:#123152; color:#4db6ac; font-size:18px; cursor:pointer; flex-shrink:0; }
+#enviar { background:#4db6ac; color:#06283d; }
+#entrada { position:fixed; inset:0; background:#0d2440; display:flex; align-items:center; justify-content:center; z-index:10; }
+.caja { text-align:center; padding:20px; }
+.logo { width:170px; border-radius:14px; margin:0 auto 14px; display:block; }
+.caja p { opacity:.6; font-size:13px; margin-bottom:20px; }
+#nombreInput { background:#123152; border:1px solid #1e3a5f; border-radius:24px; padding:14px 18px; color:#e0f2f1; font-size:16px; outline:none; text-align:center; width:240px; max-width:80vw; }
+#entrarBtn { display:block; margin:14px auto 0; background:#4db6ac; border:none; color:#06283d; font-weight:bold; padding:12px 34px; border-radius:24px; font-size:15px; cursor:pointer; }
+</style>
+</head>
+<body>
+
+<div id="entrada">
+  <div class="caja">
+    <img src="logo.png" class="logo" alt="ChatMe">
+    <p>Tu chat privado. Escribe tu nombre para entrar.</p>
+    <input id="nombreInput" maxlength="15" placeholder="Tu nombre" autocomplete="off">
+    <button id="entrarBtn">Entrar</button>
+  </div>
+</div>
+
+<header><img src="logo.png" class="logoMini" alt="ChatMe"></header>
+<div id="pantalla">
+  <div id="amigos"></div>
+  <div id="chat">
+    <div id="tituloChat">Toca un amigo para hablar 🔒</div>
+    <div id="mensajes"></div>
+    <div id="barra">
+      <input id="fileInput" type="file" accept="image/*" style="display:none">
+      <button class="boton" id="fotoBtn">🖼️</button>
+      <input id="texto" placeholder="Escribe un mensaje..." autocomplete="off">
+      <button class="boton" id="enviar">➤</button>
+    </div>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket = io();
+let yo = null, amigoActual = null;
+let contactos = [], enLinea = [], historial = [];
+
+// ---------- ENTRADA ----------
+function entrar() {
+  const n = document.getElementById('nombreInput').value.trim();
+  if (!n) return;
+  yo = n;
+  localStorage.setItem('bunkerNombre', n);
+  document.getElementById('entrada').style.display = 'none';
+  socket.emit('entrar', yo);
+}
+document.getElementById('entrarBtn').onclick = entrar;
+document.getElementById('nombreInput').addEventListener('keydown', e => { if (e.key === 'Enter') entrar(); });
+
+// Si ya entro antes, entrar directo
+const guardado = localStorage.getItem('bunkerNombre');
+if (guardado) {
+  yo = guardado;
+  document.getElementById('entrada').style.display = 'none';
+  socket.emit('entrar', yo);
+}
+
+// ---------- RESPUESTAS DEL CEREBRO ----------
+socket.on('bienvenida', d => {
+  contactos = d.contactos.filter(n => n !== yo);
+  enLinea = d.conectados;
+  historial = d.historial;
+  pintarAmigos();
+});
+
+socket.on('estado', e => {
+  if (e.nombre === yo) return;
+  if (e.enLinea) {
+    if (!enLinea.includes(e.nombre)) enLinea.push(e.nombre);
+    if (!contactos.includes(e.nombre)) contactos.push(e.nombre);
+  } else {
+    enLinea = enLinea.filter(n => n !== e.nombre);
+  }
+  pintarAmigos();
+});
+
+socket.on('mensaje', m => {
+  historial.push(m);
+  if (m.de === amigoActual || m.para === amigoActual) pintarMensajes();
+});
+
+// ---------- PINTAR LA PANTALLA ----------
+function pintarAmigos() {
+  const caja = document.getElementById('amigos');
+  caja.innerHTML = '';
+  if (contactos.length === 0) {
+    caja.innerHTML = '<div style="font-size:10px;opacity:.5;padding:10px;text-align:center;">Cuando tus amigos entren, apareceran aqui.</div>';
+    return;
+  }
+  contactos.forEach(n => {
+    const div = document.createElement('div');
+    div.className = 'amigo' + (n === amigoActual ? ' activo' : '');
+    const online = enLinea.includes(n);
+    div.innerHTML = '<div class="avatar">' + n.charAt(0).toUpperCase() +
+      '<span class="punto' + (online ? ' online' : '') + '"></span></div>' +
+      '<div class="nombreAmigo">' + n + '</div>';
+    div.onclick = () => {
+      amigoActual = n;
+      document.getElementById('tituloChat').textContent = 'Hablando con ' + n + ' 🔒';
+      pintarAmigos();
+      pintarMensajes();
+    };
+    caja.appendChild(div);
+  });
+}
+
+function pintarMensajes() {
+  const caja = document.getElementById('mensajes');
+  caja.innerHTML = '';
+  const conversa = historial.filter(m =>
+    (m.de === yo && m.para === amigoActual) || (m.de === amigoActual && m.para === yo));
+  if (conversa.length === 0) {
+    caja.innerHTML = '<div class="vacio">Aun no hablan por aqui.<br>Rompe el hielo 👋</div>';
+    return;
+  }
+  conversa.forEach(m => {
+    const div = document.createElement('div');
+    div.className = 'burbuja ' + (m.de === yo ? 'mia' : 'suya');
+    if (m.tipo === 'imagen') {
+      const img = document.createElement('img');
+      img.src = m.contenido;
+      div.appendChild(img);
+    } else {
+      div.textContent = m.contenido;
+    }
+    const h = document.createElement('div');
+    h.className = 'hora';
+    h.textContent = m.hora || '';
+    div.appendChild(h);
+    caja.appendChild(div);
+  });
+  caja.scrollTop = caja.scrollHeight;
+}
+
+// ---------- ENVIAR ----------
+function horaAhora() {
+  return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+function enviarTexto() {
+  if (!amigoActual) { alert('Primero toca un amigo de la lista 😉'); return; }
+  const input = document.getElementById('texto');
+  const t = input.value.trim();
+  if (!t) return;
+  const m = { de: yo, para: amigoActual, tipo: 'texto', contenido: t, hora: horaAhora() };
+  socket.emit('mensaje', m);
+  historial.push(m);
+  pintarMensajes();
+  input.value = '';
+}
+document.getElementById('enviar').onclick = enviarTexto;
+document.getElementById('texto').addEventListener('keydown', e => { if (e.key === 'Enter') enviarTexto(); });
+
+document.getElementById('fotoBtn').onclick = () => document.getElementById('fileInput').click();
+document.getElementById('fileInput').addEventListener('change', e => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  if (!amigoActual) { alert('Primero toca un amigo de la lista 😉'); return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const m = { de: yo, para: amigoActual, tipo: 'imagen', contenido: reader.result, hora: horaAhora() };
+    socket.emit('mensaje', m);
+    historial.push(m);
+    pintarMensajes();
+  };
+  reader.readAsDataURL(f);
+});
+</script>
+</body>
+</html>
